@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PT Nirbana Collection Persada — Percetakan, Penerbitan & Alat Tulis</title>
+  <meta name="description" content="Percetakan buku ber-ISBN, kemasan UMKM, alat tulis kantor, dan advertising di Tasikmalaya. Legalitas resmi sejak 2015.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="wrap topbar-inner">
+      <span>Percetakan • Penerbitan • Alat Tulis • Advertising</span>
+      <span class="hide-sm">Tasikmalaya, Jawa Barat | nirbanaolshop@gmail.com</span>
+    </div>
+  </div>
+
+  <header class="nav" id="nav">
+    <div class="wrap nav-inner">
+      <a href="#beranda" class="brand" aria-label="Beranda">
+        <span class="brand-mark">N</span>
+        <span class="brand-text">
+          <strong id="brandNama">PT Nirbana Collection Persada</strong>
+          <small>PRINT • MEDIA • CREATIVE</small>
+        </span>
+      </a>
+      <button class="menu-btn" id="menuBtn" aria-label="Buka menu" aria-expanded="false">☰</button>
+      <nav class="menu" id="menu">
+        <a href="#beranda">Beranda</a>
+        <a href="#produk">Produk &amp; Layanan</a>
+        <a href="#tentang">Tentang Kami</a>
+        <a href="#galeri">Portofolio</a>
+        <a href="#legalitas">Legalitas</a>
+        <a href="#kontak">Kontak</a>
+      </nav>
+      <a href="#kontak" class="btn btn-brand btn-sm">Konsultasi Gratis</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- BERANDA -->
+    <section id="beranda" class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="kicker">Percetakan &amp; Penerbitan Terpercaya</p>
+          <h1>Wujudkan Ide Anda dalam Hasil Cetak <span class="hl">Berkualitas.</span></h1>
+          <p class="lead">Solusi lengkap kebutuhan percetakan buku, kemasan UMKM, perlengkapan alat tulis kantor, hingga media promosi advertising berkualitas tinggi berpusat di Tasikmalaya.</p>
+          <div class="hero-cta">
+            <a href="#produk" class="btn btn-yellow">Jelajahi Produk →</a>
+            <a href="#kontak" class="btn btn-outline-dark">Hubungi Kami</a>
+          </div>
+          <ul class="checks">
+            <li>Bahan Terpilih</li>
+            <li>Pengerjaan Presisi</li>
+            <li>Konsultasi Ramah &amp; Cepat</li>
+          </ul>
+        </div>
+        <div class="hero-card" aria-hidden="true">
+          <div class="hero-card-inner">
+            <span class="pill">100% Bergaransi</span>
+            <div class="hero-logo">PT NIRBANA COLLECTION PERSADA</div>
+            <h3>Make it remarkable.</h3>
+            <p>Standar cetak offset &amp; digital beresolusi tinggi dengan kendali mutu berlapis.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="pillars">
+      <div class="wrap pillar-grid">
+        <article class="pillar"><span class="num">01</span><h3>Percetakan</h3><p>Buku, brosur, undangan, kalender, kop surat, faktur, &amp; kemasan produk.</p><a href="#produk" class="more">Lihat produk →</a></article>
+        <article class="pillar"><span class="num">02</span><h3>Penerbitan</h3><p>Buku ber-ISBN resmi, jurnal ilmiah, modul pelatihan, dan layouting.</p><a href="#produk" class="more">ISBN Perpusnas →</a></article>
+        <article class="pillar"><span class="num">03</span><h3>Alat Tulis</h3><p>Buku tulis custom, notes &amp; looseleaf, kertas lipat, ATK sekolah dan perkantoran.</p><a href="#produk" class="more">Pengadaan satuan →</a></article>
+        <article class="pillar"><span class="num">04</span><h3>Advertising &amp; Media</h3><p>Prasasti, nisan granit/marmer, photostrip, dan media outdoor promosi.</p><a href="#galeri" class="more">Lihat galeri →</a></article>
+      </div>
+    </section>
+
+    <!-- PRODUK -->
+    <section id="produk" class="section">
+      <div class="wrap">
+        <p class="kicker">Katalog Produk</p>
+        <div class="section-head">
+          <h2>Layanan &amp; Produk Kami</h2>
+          <input type="search" id="cari" class="input search" placeholder="Cari nama produk…" aria-label="Cari produk">
+        </div>
+        <div class="filters" id="filters" role="tablist" aria-label="Filter kategori">
+          <button class="pill-btn active" data-kat="Semua" role="tab">Semua</button>
+          <button class="pill-btn" data-kat="Cetak" role="tab">Percetakan</button>
+          <button class="pill-btn" data-kat="Kemasan" role="tab">Kemasan</button>
+          <button class="pill-btn" data-kat="Alat Tulis" role="tab">Alat Tulis</button>
+          <button class="pill-btn" data-kat="Produk Khusus" role="tab">Produk Khusus</button>
+        </div>
+        <div class="grid" id="katalog" aria-live="polite">
+          <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+        </div>
+        <p class="muted center" id="katalogKosong" hidden>Produk tidak ditemukan.</p>
+      </div>
+    </section>
+
+    <!-- TENTANG -->
+    <section id="tentang" class="section alt">
+      <div class="wrap about-grid">
+        <div>
+          <p class="kicker">Tentang Kami</p>
+          <h2>Rekan Kreatif Sejak 2015</h2>
+          <p>Berawal dari komitmen memberikan kemudahan cetak di Tasikmalaya, PT Nirbana Collection Persada kini berkembang menjadi mitra percetakan bagi pemerintah, sekolah, penerbit independen, dan UMKM di Jawa Barat.</p>
+          <div class="stats">
+            <div><strong>2015</strong><span>Tahun berdiri</span></div>
+            <div><strong>100+</strong><span>Mitra instansi</span></div>
+            <div><strong>100%</strong><span>Legalitas sah</span></div>
+          </div>
+        </div>
+        <div class="values">
+          <div class="value"><h4>Profesionalisme</h4><p>Standar mutu dan pengerjaan teliti di setiap lembar cetak.</p></div>
+          <div class="value"><h4>Kepercayaan</h4><p>Melayani instansi dinas, sekolah, dan UNIMA.</p></div>
+          <div class="value"><h4>Integritas</h4><p>Transparansi harga, estimasi, dan komitmen jadwal.</p></div>
+          <div class="value"><h4>Pelayanan Terbaik</h4><p>Konsultasi cepat, responsif, dan ramah.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GALERI -->
+    <section id="galeri" class="section">
+      <div class="wrap">
+        <p class="kicker">Galeri Contoh Produk</p>
+        <div class="section-head">
+          <h2>Hasil Karya Kami</h2>
+          <p class="muted">Arahkan kursor atau sentuh untuk menghentikan.</p>
+        </div>
+      </div>
+      <div class="marquee" id="marquee">
+        <div class="track" id="track"></div>
+      </div>
+    </section>
+
+    <!-- LEGALITAS -->
+    <section id="legalitas" class="section alt">
+      <div class="wrap">
+        <p class="kicker">Identitas Resmi</p>
+        <h2>Informasi Legalitas Perusahaan</h2>
+        <div class="legal-grid" id="legalGrid">
+          <div class="legal-card skeleton"></div><div class="legal-card skeleton"></div><div class="legal-card skeleton"></div><div class="legal-card skeleton"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- KONTAK & FORMULIR -->
+    <section id="kontak" class="section">
+      <div class="wrap contact-grid">
+        <aside>
+          <p class="kicker">Konsultasi &amp; Pemesanan</p>
+          <h2>Minta Penawaran Harga</h2>
+          <p class="muted">Sampaikan kebutuhan cetak Anda. Tim kami akan memberikan estimasi biaya transparan.</p>
+          <div class="info-card"><span>WhatsApp Bisnis</span><strong id="infoWA">+62 852-2311-9983</strong><small>Respon cepat jam kerja 08.00–17.00 WIB</small></div>
+          <div class="info-card"><span>Email</span><strong id="infoEmail">nirbanaolshop@gmail.com</strong><small>Untuk pengiriman berkas naskah dan PO resmi</small></div>
+          <div class="info-card"><span>Alamat</span><strong id="infoAlamat">Tasikmalaya, Jawa Barat</strong><small id="infoJam"></small></div>
+        </aside>
+
+        <div class="form-card">
+          <!-- Formulir -->
+          <form id="formPenawaran" novalidate>
+            <div class="row">
+              <label class="field">
+                <span>Nama Anda <b>*</b></span>
+                <input class="input" name="nama" required maxlength="120" placeholder="Contoh: Budi Santoso">
+              </label>
+              <label class="field">
+                <span>No. WhatsApp <b>*</b></span>
+                <input class="input" name="whatsapp" required inputmode="tel" maxlength="16" placeholder="08xxxxxxxxxx">
+              </label>
+            </div>
+            <label class="field">
+              <span>Email <small>(opsional)</small></span>
+              <input class="input" type="email" name="email" maxlength="120" placeholder="nama@instansi.com">
+              <small class="help">Untuk konfirmasi nomor permintaan dan pengiriman proposal PDF.</small>
+            </label>
+            <label class="field">
+              <span>Layanan yang dibutuhkan <b>*</b></span>
+              <select class="input" name="layanan" required>
+                <option value="">-- Pilih kategori layanan --</option>
+                <option>Cetak</option>
+                <option>Kemasan</option>
+                <option>Alat Tulis</option>
+                <option>Produk Khusus</option>
+              </select>
+            </label>
+            <div class="row">
+              <label class="field">
+                <span>Jumlah / Kuantitas</span>
+                <input class="input" name="jumlah" maxlength="80" placeholder="Contoh: 500 eks atau 1000 pcs">
+              </label>
+              <label class="field">
+                <span>Ukuran / Spesifikasi</span>
+                <input class="input" name="spesifikasi" maxlength="400" placeholder="A5, Hardcover, Bookpaper 72gsm">
+              </label>
+            </div>
+            <label class="field">
+              <span>Catatan tambahan</span>
+              <textarea class="input" name="catatan" rows="4" maxlength="1000" placeholder="Deadline pengiriman, finishing, laminasi, dsb."></textarea>
+            </label>
+
+            <div class="field">
+              <span>Unggah berkas desain / naskah <small>(opsional)</small></span>
+              <label class="dropzone" id="dropzone">
+                <input type="file" id="berkas" accept=".pdf,.docx,.cdr,.ai,.psd,.eps,.jpg,.jpeg,.png">
+                <strong>Klik untuk memilih berkas</strong>
+                <small>Maks. 10 MB. PDF, DOCX, CDR, AI, PSD, EPS, JPG, PNG</small>
+                <em id="namaBerkas"></em>
+              </label>
+            </div>
+
+            <!-- Honeypot: disembunyikan dari pengguna -->
+            <div class="hp" aria-hidden="true">
+              <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+            </div>
+
+            <p class="error" id="formError" role="alert" hidden></p>
+            <button type="submit" class="btn btn-brand btn-block" id="btnKirim">Kirim Permintaan Penawaran</button>
+            <p class="muted center small">Atau butuh respon instan? <a href="#" id="linkWA">Chat CS WhatsApp langsung</a></p>
+          </form>
+
+          <!-- Sukses -->
+          <div class="success" id="sukses" hidden>
+            <div class="check-circle">✓</div>
+            <h3>Permintaan Penawaran Berhasil Terkirim!</h3>
+            <p class="muted">Simpan nomor permintaan ini untuk mempercepat konsultasi.</p>
+            <div class="ticket">
+              <span>Nomor tiket permintaan</span>
+              <strong id="nomorTiket">NCP-2026-0001</strong>
+              <button class="btn btn-ghost btn-sm" id="btnSalin" type="button">Salin nomor</button>
+            </div>
+            <a class="btn btn-wa btn-block" id="linkWASukses" href="#" target="_blank" rel="noopener">Lanjutkan obrolan ke WhatsApp</a>
+            <button class="btn btn-ghost btn-block" id="btnBaru" type="button">Kirim permintaan lain</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-grid">
+      <div>
+        <strong class="yellow">PRINT • MEDIA • CREATIVE</strong>
+        <p>Solusi terpadu percetakan, penerbitan buku ISBN, penyediaan perlengkapan kantor &amp; sekolah, serta media advertising profesional berlegalitas sejak 2015 di Tasikmalaya.</p>
+      </div>
+      <div>
+        <h4>Navigasi Cepat</h4>
+        <a href="#beranda">Beranda</a>
+        <a href="#produk">Katalog Produk</a>
+        <a href="#tentang">Tentang Kami</a>
+        <a href="#galeri">Galeri Portofolio</a>
+        <a href="#legalitas">Legalitas Perusahaan</a>
+        <a href="#kontak">Minta Penawaran</a>
+      </div>
+      <div>
+        <h4>Kontak Resmi</h4>
+        <p id="footAlamat">Kp. Sukamukti RT 07 RW 02, Desa Puspahiang, Kec. Puspahiang, Kab. Tasikmalaya, Jawa Barat 46472</p>
+        <p id="footWA">+62 852-2311-9983</p>
+        <p id="footEmail">nirbanaolshop@gmail.com</p>
+        <p id="footJam">Senin–Sabtu 08.00–17.00 WIB</p>
+      </div>
+    </div>
+    <div class="copy">Copyright © 2026 PT Nirbana Collection Persada. All rights reserved.</div>
+  </footer>
+
+  <a class="wa-float" id="waFloat" href="#" target="_blank" rel="noopener" aria-label="Chat WhatsApp">Chat WhatsApp</a>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

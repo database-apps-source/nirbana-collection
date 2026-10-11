@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Panel Admin — Nirbana</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="admin-body">
+
+  <!-- ============ LOGIN ============ -->
+  <section id="vLogin" class="admin-login" hidden>
+    <form id="fLogin" class="login-card" novalidate>
+      <p class="kicker">Panel Admin</p>
+      <h1>Masuk</h1>
+      <label class="fld"><span>Username</span>
+        <input name="username" autocomplete="username" required maxlength="30">
+      </label>
+      <label class="fld"><span>Kata sandi</span>
+        <input name="password" type="password" autocomplete="current-password" required maxlength="100">
+      </label>
+      <p id="loginGalat" class="galat" role="alert"></p>
+      <button class="btn btn-primary btn-block" type="submit">Masuk</button>
+      <p class="muted small">Sesi berakhir otomatis setelah 60 menit tidak aktif.</p>
+    </form>
+  </section>
+
+  <!-- ============ APLIKASI ============ -->
+  <div id="vApp" class="admin-app" hidden>
+    <header class="admin-top">
+      <a href="#/dashboard" class="admin-brand">Nirbana <span>Admin</span></a>
+      <div class="admin-user">
+        <span id="uNama"></span>
+        <span id="uPeran" class="badge"></span>
+        <button class="btn btn-ghost btn-sm" id="btnKeluar" type="button">Keluar</button>
+      </div>
+    </header>
+
+    <nav class="admin-nav" id="navUtama" aria-label="Menu admin">
+      <a href="#/dashboard" data-menu="dashboard">Dashboard</a>
+      <a href="#/permintaan" data-menu="permintaan">Permintaan</a>
+      <a href="#/produk" data-menu="produk">Produk</a>
+      <a href="#/dokumen" data-menu="dokumen">Cetak Dokumen</a>
+      <a href="#/ekspor" data-menu="ekspor">Ekspor</a>
+      <a href="#/akun" data-menu="akun" class="hanya-super">Akun Admin</a>
+      <a href="#/sandi" data-menu="sandi">Ubah Sandi</a>
+    </nav>
+
+    <main id="main" class="admin-main" aria-live="polite"></main>
+  </div>
+
+  <!-- ============ MODAL ============ -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-kartu" role="dialog" aria-modal="true" aria-labelledby="modalJudul">
+      <div class="modal-head">
+        <h2 id="modalJudul"></h2>
+        <button class="btn btn-ghost btn-sm" type="button" data-tutup>Tutup</button>
+      </div>
+      <div id="modalIsi"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>
