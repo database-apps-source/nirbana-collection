@@ -1,30 +1,220 @@
 // ============================================================
 // Panel admin — PT Nirbana Collection Persada
 // Vanilla JS, tanpa framework. Semua data lewat GAS (doPost, JSON).
+// GAS Instant UX PRO: SWR + freshness TTL, login+bootstrap,
+// retry baca, reqId idempoten, warm-up, prefetch idle.
 // ============================================================
 (function () {
   'use strict';
 
-  const KUNCI_SESI = 'nirbana:admin:sesi';
-  const IDLE_MS = 60 * 60 * 1000;             // 60 menit tanpa aktivitas
-  const PERAN_SUPER = 'SUPER_ADMIN';
-  const STATUS = ['Baru', 'Diproses', 'Selesai', 'Dibatalkan'];
-  const LAYANAN = ['Cetak', 'Kemasan', 'Alat Tulis', 'Produk Khusus'];
-  const JENIS = [['penawaran', 'Surat Penawaran'], ['tanda_terima', 'Tanda Terima'], ['faktur', 'Faktur']];
-  const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const KUNCI_SESI    = 'nirbana:admin:sesi';
+  const LS_PFX        = 'nrb:a:v1:';            // naikkan v bila bentuk data berubah
+  const IDLE_MS       = 60 * 60 * 1000;          // 60 menit tanpa aktivitas
+  const PERAN_SUPER   = 'SUPER_ADMIN';
+  const STATUS        = ['Baru', 'Diproses', 'Selesai', 'Dibatalkan'];
+  const LAYANAN       = ['Cetak', 'Kemasan', 'Alat Tulis', 'Produk Khusus'];
+  const JENIS         = [['penawaran', 'Surat Penawaran'], ['tanda_terima', 'Tanda Terima'], ['faktur', 'Faktur']];
+  const BULAN         = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+  // Aksi baca yang aman di-retry (tanpa efek samping)
+  const READ_ACTIONS  = /^(adminBootstrap|dashboard|produkList|permintaanList|permintaanDetail|dokumenList|dokumenPindai|adminList)$/;
 
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
 
-  let sesi = null;                 // { token, nama, peran, mustChange }
+  let sesi      = null;           // { token, nama, peran, mustChange }
   let aktivitas = Date.now();
-  let viewId = 0;                  // mencegah render dari tampilan lama menimpa tampilan baru
-  let state = { tahun: null, prefill: null, filterP: { cari: '', status: 'Semua', layanan: 'Semua', tanggalDari: '', tanggalSampai: '', halaman: 1 } };
+  let viewId    = 0;              // mencegah render dari tampilan lama
+  let state     = {
+    tahun: null,
+    prefill: null,
+    filterP: { cari: '', status: 'Semua', layanan: 'Semua', tanggalDari: '', tanggalSampai: '', halaman: 1 }
+  };
   let produkCache = [];
 
   const main = $('#main');
 
-  // ---------- Utilitas ----------
+  // ============================================================
+  // PERF — ukur waktu total vs server (Prinsip 0)
+  // ============================================================
+  const Perf = {
+    rows: [],
+    add(action, total, server) {
+      this.rows.push({ action, total, server: server ?? null, net: server != null ? total - server : null, at: new Date().toISOString() });
+      if (this.rows.length > 200) this.rows.shift();
+    },
+    table() { console.table(this.rows.slice(-30)); }   // panggil Perf.table() di console
+  };
+  window.PerfAdmin = Perf;   // tersedia di console untuk debug
+
+  // ============================================================
+  // STORE — localStorage per user dengan namespace + versi (Prinsip 2)
+  // ============================================================
+  function uKey(k) { return LS_PFX + 'u:' + (sesi ? sesi.email || sesi.username : 'anon') + ':' + k; }
+  function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h + ':' + s.length; }
+
+  const Store = {
+    get(k, d) {
+      try { const v = localStorage.getItem(LS_PFX + k); return v ? JSON.parse(v) : d; }
+      catch (e) { return d; }
+    },
+    set(k, v) {
+      const s = JSON.stringify(v);
+      try { localStorage.setItem(LS_PFX + k, s); }
+      catch (e) {
+        // kuota penuh → buang cache user lain, coba sekali lagi
+        Object.keys(localStorage).filter(x => x.startsWith(LS_PFX + 'u:') && !x.includes('u:' + (sesi ? sesi.username : '') + ':'))
+          .forEach(x => localStorage.removeItem(x));
+        try { localStorage.setItem(LS_PFX + k, s); } catch (e2) { /* jalan tanpa cache */ }
+      }
+    },
+    del(k) { try { localStorage.removeItem(LS_PFX + k); } catch (e) {} }
+  };
+
+  // ============================================================
+  // API — fetch + retry + reqId idempoten (Prinsip 3, 6, 8)
+  // ============================================================
+  async function apiOnce(action, data, timeout, reqId) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    const t0 = performance.now();
+    try {
+      const res = await fetch(CONFIG.GAS_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        cache: 'no-store',
+        signal: ctrl.signal,
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action, token: sesi ? sesi.token : '', reqId: reqId || '', data: data || {} })
+      });
+      const text = await res.text();
+      try {
+        const j = JSON.parse(text);
+        Perf.add(action, Math.round(performance.now() - t0), j.ms);
+        return j;
+      } catch (e) {
+        return { success: false, network: true, retryable: res.status >= 500 || res.status === 429, message: 'Server membalas HTTP ' + res.status + ' (bukan JSON).' };
+      }
+    } catch (err) {
+      return { success: false, network: true, retryable: true, message: err.name === 'AbortError' ? 'Server lambat, mencoba lagi…' : 'Koneksi terputus.' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function waitOnline(ms) {
+    return new Promise(r => {
+      if (navigator.onLine !== false) return r();
+      const t = setTimeout(done, ms);
+      function done() { clearTimeout(t); removeEventListener('online', done); r(); }
+      addEventListener('online', done);
+    });
+  }
+
+  async function api(action, data, opt) {
+    opt = opt || {};
+    if (!sesi && action !== 'login') throw new Error('Belum masuk.');
+    if (sesi && Date.now() - aktivitas > IDLE_MS) {
+      keluar('Sesi berakhir karena tidak ada aktivitas selama 60 menit.');
+      throw new Error('Sesi berakhir.');
+    }
+    const isRead = READ_ACTIONS.test(action);
+    // reqId untuk aksi tulis agar aman di-retry
+    const reqId = isRead ? '' : (opt.reqId || (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random()));
+    const tries = isRead ? 3 : 2;
+
+    let res;
+    for (let i = 0; i < tries; i++) {
+      if (i) {
+        await new Promise(r => setTimeout(r, 1200 * i));
+        if (navigator.onLine === false) await waitOnline(15000);
+      }
+      res = await apiOnce(action, data, isRead ? (i ? 40000 : 25000) : 90000, reqId);
+      if (res.success || !res.retryable) break;
+    }
+
+    if (!res.success) {
+      if (res.kode === 'AUTH') { keluar('Sesi berakhir. Silakan masuk kembali.'); }
+      if (res.kode === 'MUST_CHANGE' && sesi) { sesi.mustChange = true; simpanSesi(); location.hash = '#/sandi'; }
+      throw new Error(res.message || 'Permintaan gagal.');
+    }
+    aktivitas = Date.now();
+    return res.data;
+  }
+
+  // ============================================================
+  // SWR — cache lokal dengan freshness TTL (Prinsip 2)
+  // ============================================================
+  async function swr(key, action, payload, render, opt) {
+    opt = opt || {};
+    const fresh = opt.fresh != null ? opt.fresh : 60000;   // default 60 dtk
+    const cacheKey = uKey(key);
+    const c = Store.get(cacheKey, null);
+    if (c) render(c.data, true);                            // tampilkan cache seketika
+    if (c && !opt.force && Date.now() - c.t < fresh) return { cached: true, data: c.data };
+
+    let res;
+    try {
+      const raw = await api(action, payload);
+      res = raw;
+    } catch (err) {
+      if (!c && opt.onError) opt.onError(err);
+      else if (!c) throw err;
+      return { cached: true, data: c ? c.data : null };
+    }
+
+    const h = hashStr(JSON.stringify(res));
+    Store.set(cacheKey, { t: Date.now(), h, data: res });
+    if (!c || c.h !== h) render(res, false);               // render ulang hanya bila data berubah
+    return { cached: false, data: res };
+  }
+
+  /** Paksa invalidasi cache lokal untuk kunci tertentu */
+  function invalidasiCache(key) { Store.del(uKey(key)); }
+
+  // ============================================================
+  // WARM-UP (Prinsip 8)
+  // ============================================================
+  function warmUp() {
+    // Ping GAS agar container tidak cold saat admin mulai kerja
+    fetch(CONFIG.GAS_URL + '?ping=' + Date.now(), { mode: 'no-cors', cache: 'no-store' }).catch(() => {});
+  }
+
+  // Warm-up saat kembali dari latar belakang > 2 menit
+  let _bgAt = 0;
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { _bgAt = Date.now(); return; }
+    if (_bgAt && Date.now() - _bgAt > 120000 && sesi) warmUp();
+  });
+
+  // ============================================================
+  // PREFETCH IDLE — muat data semua menu via batch saat idle (Prinsip 3)
+  // ============================================================
+  function prefetchIdle() {
+    if (!sesi) return;
+    const run = () => {
+      // Panggil setiap aksi baca secara paralel (1 fetch per aksi, tapi serentak)
+      const tasks = [
+        { key: 'produkList', action: 'produkList', data: {} },
+        { key: 'permintaanList', action: 'permintaanList', data: state.filterP },
+        { key: 'dokumenList', action: 'dokumenList', data: { cari: '', jenis: 'Semua' } }
+      ];
+      tasks.forEach(function (t) {
+        const cacheKey = uKey(t.key);
+        const c = Store.get(cacheKey, null);
+        if (c && Date.now() - c.t < 55000) return;  // sudah segar, lewati
+        api(t.action, t.data).then(function (data) {
+          const h = hashStr(JSON.stringify(data));
+          Store.set(cacheKey, { t: Date.now(), h, data });
+        }).catch(() => {});
+      });
+    };
+    (window.requestIdleCallback || function (cb) { setTimeout(cb, 1500); })(run);
+  }
+
+  // ============================================================
+  // UTILITAS
+  // ============================================================
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -43,12 +233,10 @@
     return isNaN(d) ? '-' : d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
   }
   function rupiah(n) { return 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID'); }
-  /** Lebar tertentu untuk berkas Drive; URL eksternal dibiarkan apa adanya. */
   function urlFoto(u, lebar) {
     return /^https:\/\/lh3\.googleusercontent\.com\/d\//.test(u) ? u.replace(/=w\d+$/, '') + '=w' + lebar : u;
   }
 
-  /** Mengecilkan foto di peramban: lebar maks 1600 px, JPEG 88%, latar putih. */
   async function kompresFoto(file) {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error('Pilih foto berformat JPG, PNG, atau WebP.');
     if (file.size > 10 * 1024 * 1024) throw new Error('Ukuran foto asli maksimal 10 MB.');
@@ -61,24 +249,20 @@
       const w = Math.round(img.naturalWidth * s);
       const h = Math.round(img.naturalHeight * s);
       const kanvas = document.createElement('canvas');
-      kanvas.width = w;
-      kanvas.height = h;
+      kanvas.width = w; kanvas.height = h;
       const ctx = kanvas.getContext('2d');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, w, h);
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, w, h);
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+      ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, w, h);
       const data = kanvas.toDataURL('image/jpeg', 0.88);
       return { base64: data.split(',')[1], mime: 'image/jpeg', pratinjau: data, kb: Math.round(data.length * 3 / 4 / 1024) };
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+    } finally { URL.revokeObjectURL(url); }
   }
 
   function waLink(nomor) {
     const s = String(nomor || '').replace(/\D/g, '');
     return s ? 'https://wa.me/62' + s.replace(/^0/, '') : '#';
   }
+
   function toast(pesan, galat) {
     const t = $('#toast');
     t.textContent = pesan;
@@ -86,63 +270,55 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(function () { t.className = 'toast'; }, 3200);
   }
+
   function isi(html) { main.innerHTML = html; }
+
   function setNav(sec) {
     $$('#navUtama a').forEach(function (a) {
       if (a.dataset.menu === sec) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
   }
-  function simpanSesi() { try { sessionStorage.setItem(KUNCI_SESI, JSON.stringify(sesi)); } catch (e) { /* mode privat */ } }
+
+  function simpanSesi() { try { sessionStorage.setItem(KUNCI_SESI, JSON.stringify(sesi)); } catch (e) {} }
   function bacaSesi() { try { return JSON.parse(sessionStorage.getItem(KUNCI_SESI) || 'null'); } catch (e) { return null; } }
-  function hapusSesi() { try { sessionStorage.removeItem(KUNCI_SESI); } catch (e) { /* abaikan */ } }
+  function hapusSesi() { try { sessionStorage.removeItem(KUNCI_SESI); } catch (e) {} }
 
-  // ---------- Komunikasi API ----------
-  async function api(action, data) {
-    if (!sesi && action !== 'login') throw new Error('Belum masuk.');
-    if (sesi && Date.now() - aktivitas > IDLE_MS) {
-      keluar('Sesi berakhir karena tidak ada aktivitas selama 60 menit.');
-      throw new Error('Sesi berakhir.');
-    }
-    const ctl = new AbortController();
-    const batas = setTimeout(function () { ctl.abort(); }, 30000);
-    try {
-      const res = await fetch(CONFIG.GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // hindari preflight CORS
-        body: JSON.stringify({ action: action, token: sesi ? sesi.token : '', data: data || {} }),
-        signal: ctl.signal
-      });
-      const j = await res.json();
-      if (!j.success) {
-        if (j.kode === 'AUTH') { keluar('Sesi berakhir. Silakan masuk kembali.'); }
-        if (j.kode === 'MUST_CHANGE' && sesi) { sesi.mustChange = true; simpanSesi(); location.hash = '#/sandi'; }
-        throw new Error(j.message || 'Permintaan gagal.');
-      }
-      aktivitas = Date.now();
-      return j.data;
-    } catch (err) {
-      if (err.name === 'AbortError') throw new Error('Koneksi lambat. Coba lagi.');
-      throw err;
-    } finally {
-      clearTimeout(batas);
-    }
-  }
-
-  // ---------- Sesi & tampilan dasar ----------
+  // ============================================================
+  // SESI & TAMPILAN DASAR
+  // ============================================================
   function tampilLogin() {
     $('#vLogin').hidden = false;
     $('#vApp').hidden = true;
   }
 
-  function mulaiApp() {
+  function mulaiApp(boot) {
     $('#vLogin').hidden = true;
     $('#vApp').hidden = false;
     $('#uNama').textContent = sesi.nama;
     $('#uPeran').textContent = sesi.peran === PERAN_SUPER ? 'Super Admin' : 'Admin Operasional';
     $$('.hanya-super').forEach(function (el) { el.classList.toggle('nonaktif-peran', sesi.peran !== PERAN_SUPER); });
-    if (sesi.mustChange && location.hash !== '#/sandi') location.hash = '#/sandi';
+    if (sesi.mustChange && location.hash !== '#/sandi') { location.hash = '#/sandi'; return; }
+
+    // Bootstrap dari login: simpan ke cache agar pindah menu langsung dari cache
+    if (boot) {
+      if (boot.dashboard) {
+        const h = hashStr(JSON.stringify(boot.dashboard));
+        Store.set(uKey('dashboard'), { t: Date.now(), h, data: boot.dashboard });
+      }
+      if (boot.produkList) {
+        const h = hashStr(JSON.stringify(boot.produkList));
+        Store.set(uKey('produkList'), { t: Date.now(), h, data: boot.produkList });
+      }
+      if (boot.permintaanList) {
+        const h = hashStr(JSON.stringify(boot.permintaanList));
+        Store.set(uKey('permintaanList'), { t: Date.now(), h, data: boot.permintaanList });
+      }
+    }
+
     route();
+    // Prefetch menu lain saat idle
+    prefetchIdle();
   }
 
   function keluar(pesan) {
@@ -153,11 +329,13 @@
   }
 
   async function keluarManual() {
-    try { await api('logout'); } catch (e) { /* sesi mungkin sudah habis */ }
+    try { await api('logout'); } catch (e) {}
     keluar('Anda telah keluar.');
   }
 
-  // ---------- Modal ----------
+  // ============================================================
+  // MODAL
+  // ============================================================
   function bukaModal(judul, html) {
     $('#modalJudul').textContent = judul;
     $('#modalIsi').innerHTML = html;
@@ -165,7 +343,9 @@
   }
   function tutupModal() { $('#modal').hidden = true; $('#modalIsi').innerHTML = ''; }
 
-  // ---------- Routing ----------
+  // ============================================================
+  // ROUTING (Prinsip 1)
+  // ============================================================
   function route() {
     if (!sesi) return;
     const bagian = (location.hash || '#/dashboard').replace(/^#\/?/, '').split('/');
@@ -185,7 +365,7 @@
     location.hash = '#/dashboard';
   }
 
-  // Tampilan wajib membatalkan render bila pengguna sudah pindah halaman.
+  // Wrapper: batalkan render bila user sudah pindah halaman
   async function muat(my, fn) {
     try {
       const hasil = await fn();
@@ -197,38 +377,42 @@
   }
 
   // ============================================================
-  // DASHBOARD
+  // DASHBOARD — SWR 90 dtk (Prinsip 2)
   // ============================================================
   async function vDashboard(my) {
     isi('<h1>Dashboard</h1><p class="muted">Memuat…</p>');
-    const d = await muat(my, function () { return api('dashboard', { tahun: state.tahun || undefined }); });
-    if (!d) return;
-    state.tahun = d.tahun;
-    const max = Math.max.apply(null, [1].concat(d.bulan));
-    const daftarTahun = d.tahunTersedia.length ? d.tahunTersedia : [d.tahun];
-    if (daftarTahun.indexOf(d.tahun) < 0) daftarTahun.push(d.tahun);
 
-    const kartu = function (angka, label) {
-      return '<div class="ringkas"><div class="angka">' + esc(angka) + '</div><div class="label">' + esc(label) + '</div></div>';
-    };
-    isi(
-      '<h1>Dashboard</h1>' +
-      '<div class="grid-ringkas">' +
-        kartu(d.ringkas.hariIni, 'Permintaan hari ini') +
-        kartu(d.ringkas.baru, 'Permintaan baru') +
-        kartu(d.ringkas.diproses, 'Sedang diproses') +
-        kartu(d.ringkas.selesaiBulanIni, 'Selesai bulan ini') +
-        kartu(d.ringkas.total, 'Total permintaan') +
-      '</div>' +
-      '<div class="kartu">' +
-        '<div class="toolbar"><h2 style="margin:0;flex:1 1 auto">Permintaan per bulan</h2>' +
-        '<select id="selTahun" aria-label="Pilih tahun" style="flex:0 0 auto;width:auto">' + opsi(daftarTahun, d.tahun) + '</select></div>' +
-        '<div class="grafik">' + d.bulan.map(function (v, i) {
-          const tinggi = Math.max(2, Math.round((v / max) * 170));
-          return '<div class="kolom"><div class="batang" style="height:' + tinggi + 'px"><b>' + v + '</b></div>' + BULAN[i] + '</div>';
-        }).join('') + '</div>' +
-      '</div>' +
-      '<div class="kartu"><h2>Permintaan terbaru</h2>' + tabelPermintaan(d.terbaru) + '</div>'
+    await swr('dashboard', 'dashboard', { tahun: state.tahun || undefined },
+      function (d, fromCache) {
+        if (my !== viewId) return;
+        state.tahun = d.tahun;
+        const max = Math.max.apply(null, [1].concat(d.bulan));
+        const daftarTahun = d.tahunTersedia.length ? d.tahunTersedia : [d.tahun];
+        if (daftarTahun.indexOf(d.tahun) < 0) daftarTahun.push(d.tahun);
+        const kartu = function (angka, label) {
+          return '<div class="ringkas"><div class="angka">' + esc(angka) + '</div><div class="label">' + esc(label) + '</div></div>';
+        };
+        isi(
+          '<h1>Dashboard' + (fromCache ? ' <span class="muted small" style="font-size:12px;font-weight:400">· cache</span>' : '') + '</h1>' +
+          '<div class="grid-ringkas">' +
+            kartu(d.ringkas.hariIni, 'Permintaan hari ini') +
+            kartu(d.ringkas.baru, 'Permintaan baru') +
+            kartu(d.ringkas.diproses, 'Sedang diproses') +
+            kartu(d.ringkas.selesaiBulanIni, 'Selesai bulan ini') +
+            kartu(d.ringkas.total, 'Total permintaan') +
+          '</div>' +
+          '<div class="kartu">' +
+            '<div class="toolbar"><h2 style="margin:0;flex:1 1 auto">Permintaan per bulan</h2>' +
+            '<select id="selTahun" aria-label="Pilih tahun" style="flex:0 0 auto;width:auto">' + opsi(daftarTahun, d.tahun) + '</select></div>' +
+            '<div class="grafik">' + d.bulan.map(function (v, i) {
+              const tinggi = Math.max(2, Math.round((v / max) * 170));
+              return '<div class="kolom"><div class="batang" style="height:' + tinggi + 'px"><b>' + v + '</b></div>' + BULAN[i] + '</div>';
+            }).join('') + '</div>' +
+          '</div>' +
+          '<div class="kartu"><h2>Permintaan terbaru</h2>' + tabelPermintaan(d.terbaru) + '</div>'
+        );
+      },
+      { fresh: 90000, onError: function (err) { if (my === viewId) toast(err.message, true); } }
     );
   }
 
@@ -244,7 +428,7 @@
   }
 
   // ============================================================
-  // PERMINTAAN
+  // PERMINTAAN — SWR 45 dtk (Prinsip 2)
   // ============================================================
   async function vPermintaan(my) {
     const f = state.filterP;
@@ -264,57 +448,66 @@
   }
 
   async function muatDaftarPermintaan(my) {
-    const d = await muat(my, function () { return api('permintaanList', state.filterP); });
-    if (!d) return;
-    state.filterP.halaman = d.halaman;
-    const pager = d.jumlahHalaman > 1
-      ? '<div class="pager">' +
-          '<button class="btn btn-ghost btn-sm" data-aksi="hal" data-hal="' + (d.halaman - 1) + '"' + (d.halaman <= 1 ? ' disabled' : '') + '>‹ Sebelumnya</button>' +
-          '<span>Halaman ' + d.halaman + ' / ' + d.jumlahHalaman + '</span>' +
-          '<button class="btn btn-ghost btn-sm" data-aksi="hal" data-hal="' + (d.halaman + 1) + '"' + (d.halaman >= d.jumlahHalaman ? ' disabled' : '') + '>Berikutnya ›</button>' +
-        '</div>'
-      : '';
-    $('#hasilP').innerHTML = '<p class="muted small" style="margin:0 0 10px">' + d.total + ' permintaan ditemukan</p>' +
-      tabelPermintaan(d.rows) + pager;
+    const cacheKey = 'permintaanList:' + JSON.stringify(state.filterP);
+    await swr(cacheKey, 'permintaanList', state.filterP,
+      function (d, fromCache) {
+        if (my !== viewId) return;
+        state.filterP.halaman = d.halaman;
+        const pager = d.jumlahHalaman > 1
+          ? '<div class="pager">' +
+              '<button class="btn btn-ghost btn-sm" data-aksi="hal" data-hal="' + (d.halaman - 1) + '"' + (d.halaman <= 1 ? ' disabled' : '') + '>‹ Sebelumnya</button>' +
+              '<span>Halaman ' + d.halaman + ' / ' + d.jumlahHalaman + '</span>' +
+              '<button class="btn btn-ghost btn-sm" data-aksi="hal" data-hal="' + (d.halaman + 1) + '"' + (d.halaman >= d.jumlahHalaman ? ' disabled' : '') + '>Berikutnya ›</button>' +
+            '</div>'
+          : '';
+        $('#hasilP').innerHTML = '<p class="muted small" style="margin:0 0 10px">' + d.total + ' permintaan ditemukan' + (fromCache ? ' · <span style="opacity:.6">cache</span>' : '') + '</p>' +
+          tabelPermintaan(d.rows) + pager;
+      },
+      { fresh: 45000, onError: function (err) { if (my === viewId) toast(err.message, true); } }
+    );
   }
 
   async function vDetail(id, my) {
     isi('<p><a href="#/permintaan">← Kembali ke daftar</a></p><p class="muted">Memuat…</p>');
-    const d = await muat(my, function () { return api('permintaanDetail', { id: id }); });
-    if (!d) return;
-    const dokumen = d.dokumen.length
-      ? '<div class="tabel-wrap"><table class="tabel"><thead><tr><th>Nomor</th><th>Jenis</th><th>Total</th><th>Tanggal</th><th>PDF</th></tr></thead><tbody>' +
-        d.dokumen.map(function (x) {
-          const lbl = (JENIS.filter(function (j) { return j[0] === x.jenis; })[0] || [0, x.jenis])[1];
-          return '<tr><td>' + esc(x.nomor) + '</td><td>' + esc(lbl) + '</td><td>' + (x.total ? rupiah(x.total) : '-') +
-            '</td><td>' + fmtTgl(x.tanggal) + '</td><td><a href="' + esc(x.link) + '" target="_blank" rel="noopener">Buka</a></td></tr>';
-        }).join('') + '</tbody></table></div>'
-      : '<p class="muted">Belum ada dokumen untuk permintaan ini.</p>';
-
-    isi(
-      '<p><a href="#/permintaan">← Kembali ke daftar</a></p>' +
-      '<h1>' + esc(d.id) + ' <span class="status ' + esc(d.status) + '">' + esc(d.status) + '</span></h1>' +
-      '<div class="kartu"><h2>Data permintaan</h2><div class="form-grid">' +
-        info('Tanggal', fmtTgl(d.tanggal)) +
-        info('Nama', d.nama) +
-        info('WhatsApp', '<a href="' + waLink(d.whatsapp) + '" target="_blank" rel="noopener">' + esc(d.whatsapp) + '</a>') +
-        info('Email', d.email || '-') +
-        info('Layanan', d.layanan) +
-        info('Jumlah', d.jumlah || '-') +
-        info('Sumber', d.sumber || '-') +
-        info('Spesifikasi', d.spesifikasi || '-', true) +
-        info('Catatan pelanggan', d.catatan || '-', true) +
-        (d.linkBerkas ? info('Berkas', '<a href="' + esc(d.linkBerkas) + '" target="_blank" rel="noopener">Buka berkas</a>', true) : '') +
-      '</div></div>' +
-      '<form class="kartu" id="fUbahP" data-id="' + esc(d.id) + '"><h2>Tindak lanjut</h2><div class="form-grid">' +
-        '<label class="fld"><span>Status</span><select name="status">' + opsi(STATUS, d.status) + '</select></label>' +
-        '<label class="fld penuh"><span>Catatan internal (tidak tampil ke pelanggan)</span><textarea name="catatanInternal" maxlength="1000">' + esc(d.catatanInternal) + '</textarea></label>' +
-      '</div><div class="aksi" style="margin-top:12px"><button class="btn btn-primary" type="submit">Simpan perubahan</button></div></form>' +
-      '<div class="kartu"><h2>Dokumen</h2><div class="aksi" style="margin-bottom:12px">' +
-        '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="penawaran" data-id="' + esc(d.id) + '">Buat penawaran</button>' +
-        '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="tanda_terima" data-id="' + esc(d.id) + '">Buat tanda terima</button>' +
-        '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="faktur" data-id="' + esc(d.id) + '">Buat faktur</button>' +
-      '</div>' + dokumen + '</div>'
+    const cacheKey = 'detail:' + id;
+    await swr(cacheKey, 'permintaanDetail', { id: id },
+      function (d, _fromCache) {
+        if (my !== viewId) return;
+        const dokumen = d.dokumen.length
+          ? '<div class="tabel-wrap"><table class="tabel"><thead><tr><th>Nomor</th><th>Jenis</th><th>Total</th><th>Tanggal</th><th>PDF</th></tr></thead><tbody>' +
+            d.dokumen.map(function (x) {
+              const lbl = (JENIS.filter(function (j) { return j[0] === x.jenis; })[0] || [0, x.jenis])[1];
+              return '<tr><td>' + esc(x.nomor) + '</td><td>' + esc(lbl) + '</td><td>' + (x.total ? rupiah(x.total) : '-') +
+                '</td><td>' + fmtTgl(x.tanggal) + '</td><td><a href="' + esc(x.link) + '" target="_blank" rel="noopener">Buka</a></td></tr>';
+            }).join('') + '</tbody></table></div>'
+          : '<p class="muted">Belum ada dokumen untuk permintaan ini.</p>';
+        isi(
+          '<p><a href="#/permintaan">← Kembali ke daftar</a></p>' +
+          '<h1>' + esc(d.id) + ' <span class="status ' + esc(d.status) + '">' + esc(d.status) + '</span></h1>' +
+          '<div class="kartu"><h2>Data permintaan</h2><div class="form-grid">' +
+            info('Tanggal', fmtTgl(d.tanggal)) +
+            info('Nama', d.nama) +
+            info('WhatsApp', '<a href="' + waLink(d.whatsapp) + '" target="_blank" rel="noopener">' + esc(d.whatsapp) + '</a>') +
+            info('Email', d.email || '-') +
+            info('Layanan', d.layanan) +
+            info('Jumlah', d.jumlah || '-') +
+            info('Sumber', d.sumber || '-') +
+            info('Spesifikasi', d.spesifikasi || '-', true) +
+            info('Catatan pelanggan', d.catatan || '-', true) +
+            (d.linkBerkas ? info('Berkas', '<a href="' + esc(d.linkBerkas) + '" target="_blank" rel="noopener">Buka berkas</a>', true) : '') +
+          '</div></div>' +
+          '<form class="kartu" id="fUbahP" data-id="' + esc(d.id) + '"><h2>Tindak lanjut</h2><div class="form-grid">' +
+            '<label class="fld"><span>Status</span><select name="status">' + opsi(STATUS, d.status) + '</select></label>' +
+            '<label class="fld penuh"><span>Catatan internal (tidak tampil ke pelanggan)</span><textarea name="catatanInternal" maxlength="1000">' + esc(d.catatanInternal) + '</textarea></label>' +
+          '</div><div class="aksi" style="margin-top:12px"><button class="btn btn-primary" type="submit">Simpan perubahan</button></div></form>' +
+          '<div class="kartu"><h2>Dokumen</h2><div class="aksi" style="margin-bottom:12px">' +
+            '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="penawaran" data-id="' + esc(d.id) + '">Buat penawaran</button>' +
+            '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="tanda_terima" data-id="' + esc(d.id) + '">Buat tanda terima</button>' +
+            '<button class="btn btn-ghost btn-sm" data-aksi="buat-dok" data-jenis="faktur" data-id="' + esc(d.id) + '">Buat faktur</button>' +
+          '</div>' + dokumen + '</div>'
+        );
+      },
+      { fresh: 30000, onError: function (err) { if (my === viewId) toast(err.message, true); } }
     );
   }
 
@@ -323,7 +516,7 @@
   }
 
   // ============================================================
-  // PRODUK
+  // PRODUK — SWR 120 dtk (Prinsip 2)
   // ============================================================
   async function vProduk(my) {
     isi(
@@ -333,12 +526,17 @@
         '<button class="btn btn-ghost" data-aksi="urutan-simpan" type="button">Simpan urutan tampilan</button>' +
       '</div>' +
       '<div id="tabelProduk"><p class="muted">Memuat…</p></div>' +
-      '<p class="muted small">Urutan memengaruhi tampilan di beranda. Produk nonaktif tidak tampil untuk publik. Hapus permanen hanya tersedia untuk produk yang sudah dinonaktifkan.</p>'
+      '<p class="muted small">Urutan memengaruhi tampilan di beranda. Produk nonaktif tidak tampil untuk publik.</p>'
     );
-    const d = await muat(my, function () { return api('produkList'); });
-    if (!d) return;
-    produkCache = d;
-    renderProduk();
+
+    await swr('produkList', 'produkList', {},
+      function (d, _fromCache) {
+        if (my !== viewId) return;
+        produkCache = d;
+        renderProduk();
+      },
+      { fresh: 120000, onError: function (err) { if (my === viewId) { $('#tabelProduk').innerHTML = '<p class="muted">Gagal memuat. <button class="btn btn-ghost btn-sm" onclick="location.reload()">Coba lagi</button></p>'; toast(err.message, true); } } }
+    );
   }
 
   function renderProduk() {
@@ -362,7 +560,7 @@
       }).join('') + '</tbody></table></div>';
   }
 
-  let pilihanFoto = null;   // foto yang sudah dikompres, menunggu disimpan
+  let pilihanFoto = null;
 
   function bukaFormProduk(p) {
     const baru = !p;
@@ -422,6 +620,7 @@
         await api('produkSimpan', data);
         tutupModal();
         toast('Produk disimpan.' + (pilihanFoto ? ' Foto tersimpan di Drive.' : ''));
+        invalidasiCache('produkList');
         vProduk(viewId);
       } catch (err) {
         $('#galatProduk').textContent = err.message;
@@ -433,7 +632,7 @@
   }
 
   // ============================================================
-  // CETAK DOKUMEN
+  // CETAK DOKUMEN (Prinsip 2)
   // ============================================================
   async function vDokumen(my) {
     const pre = state.prefill || {};
@@ -529,16 +728,22 @@
 
   async function muatDaftarDokumen(my) {
     const f = $('#fFilterDok');
-    const d = await muat(my, function () { return api('dokumenList', { cari: f.cari.value.trim(), jenis: f.jenis.value }); });
-    if (!d) return;
-    $('#listDok').innerHTML = d.length
-      ? '<div class="tabel-wrap"><table class="tabel"><thead><tr><th>Nomor</th><th>Jenis</th><th>Permintaan</th><th>Total</th><th>Tanggal</th><th>PDF</th></tr></thead><tbody>' +
-        d.map(function (x) {
-          return '<tr><td>' + esc(x.nomor) + '</td><td>' + esc(x.label) + '</td><td>' + esc(x.permintaanId || '-') + '</td>' +
-            '<td>' + (x.total ? rupiah(x.total) : '-') + '</td><td>' + fmtTgl(x.tanggal) + '</td>' +
-            '<td><a href="' + esc(x.link) + '" target="_blank" rel="noopener">Buka</a></td></tr>';
-        }).join('') + '</tbody></table></div>'
-      : '<p class="muted">Belum ada dokumen.</p>';
+    const payload = { cari: f.cari.value.trim(), jenis: f.jenis.value };
+    const cacheKey = 'dokumenList:' + JSON.stringify(payload);
+    await swr(cacheKey, 'dokumenList', payload,
+      function (d, _fromCache) {
+        if (my !== viewId) return;
+        $('#listDok').innerHTML = d.length
+          ? '<div class="tabel-wrap"><table class="tabel"><thead><tr><th>Nomor</th><th>Jenis</th><th>Permintaan</th><th>Total</th><th>Tanggal</th><th>PDF</th></tr></thead><tbody>' +
+            d.map(function (x) {
+              return '<tr><td>' + esc(x.nomor) + '</td><td>' + esc(x.label) + '</td><td>' + esc(x.permintaanId || '-') + '</td>' +
+                '<td>' + (x.total ? rupiah(x.total) : '-') + '</td><td>' + fmtTgl(x.tanggal) + '</td>' +
+                '<td><a href="' + esc(x.link) + '" target="_blank" rel="noopener">Buka</a></td></tr>';
+            }).join('') + '</tbody></table></div>'
+          : '<p class="muted">Belum ada dokumen.</p>';
+      },
+      { fresh: 60000 }
+    );
   }
 
   async function pindaiTemplate(my) {
@@ -593,7 +798,7 @@
   }
 
   // ============================================================
-  // AKUN ADMIN (Super Admin)
+  // AKUN ADMIN (Prinsip 2 — SWR 120 dtk)
   // ============================================================
   async function vAkun(my) {
     isi(
@@ -607,21 +812,26 @@
       '</div><div class="aksi" style="margin-top:12px"><button class="btn btn-primary" type="submit">Buat akun</button></div>' +
       '<p class="muted small">Pengguna baru wajib mengganti kata sandi saat masuk pertama.</p></form>'
     );
-    const d = await muat(my, function () { return api('adminList'); });
-    if (!d) return;
-    $('#tabelAkun').innerHTML = '<div class="tabel-wrap"><table class="tabel"><thead><tr>' +
-      '<th>Username</th><th>Nama</th><th>Peran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>' +
-      d.map(function (a) {
-        return '<tr><td><b>' + esc(a.username) + '</b></td><td>' + esc(a.nama) + '</td>' +
-          '<td><select data-aksi="peran" data-u="' + esc(a.username) + '" aria-label="Peran ' + esc(a.username) + '">' +
-            opsi([['ADMIN_OPERASIONAL', 'Admin Operasional'], ['SUPER_ADMIN', 'Super Admin']], a.peran) + '</select></td>' +
-          '<td><span class="status ' + (a.aktif ? 'Selesai' : 'Dibatalkan') + '">' + (a.aktif ? 'Aktif' : 'Nonaktif') + '</span>' +
-            (a.mustChange ? ' <span class="muted small">· wajib ganti sandi</span>' : '') + '</td>' +
-          '<td><div class="aksi">' +
-            '<button class="btn btn-ghost btn-sm" data-aksi="akun-aktif" data-u="' + esc(a.username) + '" data-aktif="' + (a.aktif ? '1' : '0') + '">' + (a.aktif ? 'Nonaktifkan' : 'Aktifkan') + '</button>' +
-            '<button class="btn btn-ghost btn-sm" data-aksi="akun-reset" data-u="' + esc(a.username) + '">Reset sandi</button>' +
-          '</div></td></tr>';
-      }).join('') + '</tbody></table></div>';
+
+    await swr('adminList', 'adminList', {},
+      function (d, _fromCache) {
+        if (my !== viewId) return;
+        $('#tabelAkun').innerHTML = '<div class="tabel-wrap"><table class="tabel"><thead><tr>' +
+          '<th>Username</th><th>Nama</th><th>Peran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>' +
+          d.map(function (a) {
+            return '<tr><td><b>' + esc(a.username) + '</b></td><td>' + esc(a.nama) + '</td>' +
+              '<td><select data-aksi="peran" data-u="' + esc(a.username) + '" aria-label="Peran ' + esc(a.username) + '">' +
+                opsi([['ADMIN_OPERASIONAL', 'Admin Operasional'], ['SUPER_ADMIN', 'Super Admin']], a.peran) + '</select></td>' +
+              '<td><span class="status ' + (a.aktif ? 'Selesai' : 'Dibatalkan') + '">' + (a.aktif ? 'Aktif' : 'Nonaktif') + '</span>' +
+                (a.mustChange ? ' <span class="muted small">· wajib ganti sandi</span>' : '') + '</td>' +
+              '<td><div class="aksi">' +
+                '<button class="btn btn-ghost btn-sm" data-aksi="akun-aktif" data-u="' + esc(a.username) + '" data-aktif="' + (a.aktif ? '1' : '0') + '">' + (a.aktif ? 'Nonaktifkan' : 'Aktifkan') + '</button>' +
+                '<button class="btn btn-ghost btn-sm" data-aksi="akun-reset" data-u="' + esc(a.username) + '">Reset sandi</button>' +
+              '</div></td></tr>';
+          }).join('') + '</tbody></table></div>';
+      },
+      { fresh: 120000, onError: function (err) { if (my === viewId) toast(err.message, true); } }
+    );
   }
 
   // ============================================================
@@ -677,19 +887,27 @@
       try {
         await api('produkUrutan', { urutan: urutan });
         produkCache.forEach(function (p, k) { p.urutan = k + 1; });
+        invalidasiCache('produkList');
         toast('Urutan tampilan disimpan.');
       } catch (err) { toast(err.message, true); }
       return;
     }
+    // Optimistic UI: toggle aktif langsung ke layar, rollback bila gagal (Prinsip 2)
     if (aksi === 'produk-aktif') {
       const p = produkCache[i];
+      const sebelumnya = p.aktif;
+      p.aktif = !p.aktif;
+      renderProduk();   // instan
       try {
         await api('produkSimpan', { id: p.id, nama: p.nama, kategori: p.kategori, deskripsi: p.deskripsi,
-          keterangan: p.keterangan, gambarURL: p.gambarURL, aktif: !p.aktif, urutan: p.urutan });
-        p.aktif = !p.aktif;
-        renderProduk();
+          keterangan: p.keterangan, gambarURL: p.gambarURL, aktif: p.aktif, urutan: p.urutan });
+        invalidasiCache('produkList');
         toast(p.aktif ? 'Produk diaktifkan.' : 'Produk dinonaktifkan.');
-      } catch (err) { toast(err.message, true); }
+      } catch (err) {
+        p.aktif = sebelumnya;   // rollback
+        renderProduk();
+        toast(err.message, true);
+      }
       return;
     }
     if (aksi === 'produk-hapus') {
@@ -699,6 +917,7 @@
       try {
         await api('produkHapus', { id: p.id, konfirmasi: 'HAPUS' });
         toast('Produk dihapus.');
+        invalidasiCache('produkList');
         vProduk(my);
       } catch (err) { toast(err.message, true); }
       return;
@@ -711,6 +930,7 @@
       try {
         await api('adminUbah', { username: u, aktif: !aktifSekarang });
         toast('Status akun diperbarui.');
+        invalidasiCache('adminList');
         vAkun(my);
       } catch (err) { toast(err.message, true); }
       return;
@@ -724,6 +944,7 @@
           '<p>Berikan kata sandi ini kepada <b>' + esc(u) + '</b>. Ditampilkan sekali saja, dan pengguna wajib menggantinya saat masuk.</p>' +
           '<p style="font-size:20px"><code>' + esc(d.sandiSementara) + '</code></p>' +
           '<div class="aksi"><button class="btn btn-primary" type="button" data-tutup>Sudah dicatat</button></div>');
+        invalidasiCache('adminList');
         vAkun(my);
       } catch (err) { toast(err.message, true); }
       return;
@@ -735,8 +956,13 @@
     if (t.name === 'jenis' && t.form && t.form.id === 'fDok') { syaratItem(); return; }
     if (t.dataset.aksi === 'peran') {
       api('adminUbah', { username: t.dataset.u, peran: t.value })
-        .then(function () { toast('Peran diperbarui.'); })
+        .then(function () { toast('Peran diperbarui.'); invalidasiCache('adminList'); })
         .catch(function (err) { toast(err.message, true); vAkun(viewId); });
+    }
+    if (t.id === 'selTahun') {
+      state.tahun = Number(t.value);
+      invalidasiCache('dashboard');
+      vDashboard(viewId);
     }
   });
 
@@ -758,6 +984,8 @@
       try {
         await api('permintaanUbah', { id: f.dataset.id, status: f.status.value, catatanInternal: f.catatanInternal.value.trim() });
         toast('Perubahan disimpan.');
+        invalidasiCache('detail:' + f.dataset.id);
+        invalidasiCache('permintaanList');
         vDetail(f.dataset.id, my);
       } catch (err) { toast(err.message, true); }
       return;
@@ -790,16 +1018,18 @@
           '<p class="muted small">Kode verifikasi: <code>' + esc(d.kodeVerifikasi) + '</code></p>' +
           '<div class="aksi"><a class="btn btn-primary btn-sm" href="' + esc(d.link) + '" target="_blank" rel="noopener">Buka PDF</a></div></div>';
         toast('Dokumen berhasil dibuat.');
+        invalidasiCache('dokumenList:' + JSON.stringify({ cari: '', jenis: 'Semua' }));
         muatDaftarDokumen(my);
-      } catch (err) {
-        toast(err.message, true);
-      } finally {
-        tombol.disabled = false;
-      }
+      } catch (err) { toast(err.message, true); }
+      finally { tombol.disabled = false; }
       return;
     }
 
-    if (f.id === 'fFilterDok') { muatDaftarDokumen(my); return; }
+    if (f.id === 'fFilterDok') {
+      invalidasiCache('dokumenList:' + JSON.stringify({ cari: f.cari.value.trim(), jenis: f.jenis.value }));
+      muatDaftarDokumen(my);
+      return;
+    }
 
     if (f.id === 'fEkspor') {
       const tombol = f.querySelector('button[type="submit"]');
@@ -823,6 +1053,7 @@
           peran: f.peran.value, sandiAwal: f.sandiAwal.value
         });
         toast('Akun dibuat.');
+        invalidasiCache('adminList');
         vAkun(my);
       } catch (err) { toast(err.message, true); }
       return;
@@ -843,14 +1074,6 @@
     }
   });
 
-  // Filter dashboard (pilih tahun) memakai change pada select di kanvas utama.
-  main.addEventListener('change', function (e) {
-    if (e.target.id === 'selTahun') {
-      state.tahun = Number(e.target.value);
-      vDashboard(viewId);
-    }
-  });
-
   // ============================================================
   // LOGIN, LOGOUT, DAN INISIALISASI
   // ============================================================
@@ -865,11 +1088,12 @@
     const tombol = f.querySelector('button[type="submit"]');
     tombol.disabled = true;
     try {
+      // Login mengembalikan data + bootstrap (Prinsip 3)
       const d = await api('login', { username: u, password: p });
-      sesi = { token: d.token, nama: d.nama, peran: d.peran, mustChange: !!d.mustChange };
+      sesi = { token: d.token, nama: d.nama, peran: d.peran, username: u, mustChange: !!d.mustChange };
       simpanSesi();
       f.password.value = '';
-      mulaiApp();
+      mulaiApp(d.boot || null);   // d.boot berisi dashboard + produkList dari satu panggilan
       toast(d.mustChange ? 'Silakan ganti kata sandi sementara Anda.' : 'Selamat datang, ' + d.nama + '.');
     } catch (err) {
       galat.textContent = err.message;
@@ -892,10 +1116,11 @@
   }, 30000);
 
   document.addEventListener('DOMContentLoaded', function () {
+    warmUp();   // warm-up ping saat halaman dibuka (Prinsip 8)
     const tersimpan = bacaSesi();
     if (tersimpan && tersimpan.token) {
       sesi = tersimpan;
-      mulaiApp();
+      mulaiApp(null);   // sesi dari sessionStorage: pakai cache lokal, fetch di latar
     } else {
       tampilLogin();
     }
