@@ -43,6 +43,38 @@
     return isNaN(d) ? '-' : d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
   }
   function rupiah(n) { return 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID'); }
+  /** Lebar tertentu untuk berkas Drive; URL eksternal dibiarkan apa adanya. */
+  function urlFoto(u, lebar) {
+    return /^https:\/\/lh3\.googleusercontent\.com\/d\//.test(u) ? u.replace(/=w\d+$/, '') + '=w' + lebar : u;
+  }
+
+  /** Mengecilkan foto di peramban: lebar maks 1600 px, JPEG 88%, latar putih. */
+  async function kompresFoto(file) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error('Pilih foto berformat JPG, PNG, atau WebP.');
+    if (file.size > 10 * 1024 * 1024) throw new Error('Ukuran foto asli maksimal 10 MB.');
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const s = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * s);
+      const h = Math.round(img.naturalHeight * s);
+      const kanvas = document.createElement('canvas');
+      kanvas.width = w;
+      kanvas.height = h;
+      const ctx = kanvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      const data = kanvas.toDataURL('image/jpeg', 0.88);
+      return { base64: data.split(',')[1], mime: 'image/jpeg', pratinjau: data, kb: Math.round(data.length * 3 / 4 / 1024) };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   function waLink(nomor) {
     const s = String(nomor || '').replace(/\D/g, '');
     return s ? 'https://wa.me/62' + s.replace(/^0/, '') : '#';
@@ -312,9 +344,12 @@
   function renderProduk() {
     if (!produkCache.length) { $('#tabelProduk').innerHTML = '<p class="muted">Belum ada produk.</p>'; return; }
     $('#tabelProduk').innerHTML = '<div class="tabel-wrap"><table class="tabel"><thead><tr>' +
-      '<th>Urutan</th><th>Nama</th><th>Kategori</th><th>Status</th><th>Aksi</th></tr></thead><tbody>' +
+      '<th>Urutan</th><th>Foto</th><th>Nama</th><th>Kategori</th><th>Status</th><th>Aksi</th></tr></thead><tbody>' +
       produkCache.map(function (p, i) {
-        return '<tr><td>' + (i + 1) + '</td><td><b>' + esc(p.nama) + '</b><br><span class="muted small">' + esc(p.id) + '</span></td>' +
+        const foto = p.gambarURL
+          ? '<img class="thumb" src="' + esc(urlFoto(p.gambarURL, 240)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+          : '<span class="muted small">Belum ada</span>';
+        return '<tr><td>' + (i + 1) + '</td><td>' + foto + '</td><td><b>' + esc(p.nama) + '</b><br><span class="muted small">' + esc(p.id) + '</span></td>' +
           '<td>' + esc(p.kategori) + '</td>' +
           '<td><span class="status ' + (p.aktif ? 'Selesai' : 'Dibatalkan') + '">' + (p.aktif ? 'Aktif' : 'Nonaktif') + '</span></td>' +
           '<td><div class="aksi">' +
@@ -327,8 +362,11 @@
       }).join('') + '</tbody></table></div>';
   }
 
+  let pilihanFoto = null;   // foto yang sudah dikompres, menunggu disimpan
+
   function bukaFormProduk(p) {
     const baru = !p;
+    pilihanFoto = null;
     p = p || { nama: '', kategori: LAYANAN[0], deskripsi: '', keterangan: 'Konsultasi', gambarURL: '', aktif: true, urutan: produkCache.length + 1 };
     bukaModal(baru ? 'Tambah produk' : 'Ubah produk',
       '<form id="fProduk" class="form-grid" data-id="' + esc(p.id || '') + '">' +
@@ -336,28 +374,60 @@
         '<label class="fld"><span>Kategori</span><select name="kategori">' + opsi(LAYANAN, p.kategori) + '</select></label>' +
         '<label class="fld"><span>Keterangan harga</span><input name="keterangan" maxlength="60" value="' + esc(p.keterangan) + '"></label>' +
         '<label class="fld penuh"><span>Deskripsi singkat</span><textarea name="deskripsi" required maxlength="160">' + esc(p.deskripsi) + '</textarea></label>' +
-        '<label class="fld penuh"><span>URL gambar (opsional)</span><input name="gambarURL" type="url" maxlength="500" value="' + esc(p.gambarURL) + '"></label>' +
+        '<div class="fld penuh"><span>Foto produk (otomatis disimpan ke Google Drive)</span>' +
+          '<input id="fFoto" type="file" accept="image/jpeg,image/png,image/webp">' +
+          '<img id="pratinjauFoto" class="pratinjau" alt="Pratinjau foto produk"' + (p.gambarURL ? ' src="' + esc(urlFoto(p.gambarURL, 480)) + '"' : ' hidden') + '>' +
+          '<p class="muted small" id="infoFoto">' + (p.gambarURL ? 'Foto saat ini. Pilih foto baru untuk menggantinya.' : 'JPG, PNG, atau WebP. Foto dikecilkan otomatis agar cepat dimuat.') + '</p>' +
+          (p.gambarURL ? '<label class="small"><input type="checkbox" name="hapusGambar"> Hapus foto dari produk</label>' : '') +
+        '</div>' +
+        '<label class="fld penuh"><span>atau URL gambar eksternal (opsional)</span><input name="gambarURL" type="url" maxlength="500" value="' + esc(p.gambarURL) + '"></label>' +
         '<label class="fld"><span>Status</span><select name="aktif"><option value="YA"' + (p.aktif ? ' selected' : '') + '>Aktif</option><option value="TIDAK"' + (!p.aktif ? ' selected' : '') + '>Nonaktif</option></select></label>' +
         '<div class="penuh aksi"><button class="btn btn-primary" type="submit">Simpan</button><button class="btn btn-ghost" type="button" data-tutup>Batal</button></div>' +
         '<p class="galat penuh" id="galatProduk"></p>' +
       '</form>'
     );
+    $('#fFoto').addEventListener('change', async function () {
+      const file = this.files[0];
+      $('#galatProduk').textContent = '';
+      if (!file) { pilihanFoto = null; return; }
+      try {
+        pilihanFoto = await kompresFoto(file);
+        const pra = $('#pratinjauFoto');
+        pra.src = pilihanFoto.pratinjau;
+        pra.hidden = false;
+        $('#infoFoto').textContent = 'Akan diunggah sebagai JPG sekitar ' + pilihanFoto.kb + ' KB, lebar maks 1600 px.';
+      } catch (err) {
+        this.value = '';
+        pilihanFoto = null;
+        $('#galatProduk').textContent = err.message;
+      }
+    });
+
     $('#fProduk').addEventListener('submit', async function (e) {
       e.preventDefault();
       const f = e.target;
+      const tombol = f.querySelector('button[type="submit"]');
       const data = {
         id: f.dataset.id || '', nama: f.nama.value.trim(), kategori: f.kategori.value,
         keterangan: f.keterangan.value.trim(), deskripsi: f.deskripsi.value.trim(),
         gambarURL: f.gambarURL.value.trim(), aktif: f.aktif.value === 'YA',
-        urutan: p.urutan || produkCache.length + 1
+        urutan: p.urutan || produkCache.length + 1,
+        hapusGambar: !!(f.hapusGambar && f.hapusGambar.checked)
       };
+      if (pilihanFoto) data.gambar = { base64: pilihanFoto.base64, mime: pilihanFoto.mime };
+
+      tombol.disabled = true;
+      tombol.textContent = pilihanFoto ? 'Mengunggah foto…' : 'Menyimpan…';
       try {
         await api('produkSimpan', data);
         tutupModal();
-        toast('Produk disimpan.');
+        toast('Produk disimpan.' + (pilihanFoto ? ' Foto tersimpan di Drive.' : ''));
         vProduk(viewId);
       } catch (err) {
         $('#galatProduk').textContent = err.message;
+      } finally {
+        tombol.disabled = false;
+        tombol.textContent = 'Simpan';
       }
     });
   }

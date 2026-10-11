@@ -123,6 +123,16 @@ table.tabel tr:last-child td { border-bottom: 0; }
   .toolbar .btn { width: 100%; }
 }
 
+/* ---------- Foto produk ---------- */
+.pratinjau {
+  display: block; width: 100%; max-width: 260px; aspect-ratio: 4 / 3; object-fit: contain;
+  background: #fff; border: 1px solid #D5DCEA; border-radius: 12px; margin: 6px 0;
+}
+.thumb {
+  width: 56px; height: 56px; object-fit: contain; background: #fff; border-radius: 10px;
+  border: 1px solid #E3E8F2; display: block;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast { transition: none; }
 }

@@ -110,14 +110,31 @@
     wadah.innerHTML = hasil.map(kartuProduk).join('');
   }
 
+  /** Berkas Drive: pilih ukuran lebar lewat parameter =wN agar tajam di layar Retina. */
+  function urlFoto(u, lebar) {
+    return /^https:\/\/lh3\.googleusercontent\.com\/d\//.test(u) ? u.replace(/=w\d+$/, '') + '=w' + lebar : u;
+  }
+
+  /** Foto produk. Bila gagal dimuat, gambar dilepas dan inisial tetap tampil. */
+  function fotoProduk(p) {
+    const drive = /^https:\/\/lh3\.googleusercontent\.com\/d\//.test(p.gambar);
+    const srcset = drive
+      ? ' srcset="' + esc(urlFoto(p.gambar, 480) + ' 480w, ' + urlFoto(p.gambar, 800) + ' 800w, ' + urlFoto(p.gambar, 1200) + ' 1200w') + '"' +
+        ' sizes="(max-width: 767px) 46vw, 300px"'
+      : '';
+    return '<span class="media-ph" aria-hidden="true">' + esc(p.nama.charAt(0)) + '</span>' +
+      '<img src="' + esc(urlFoto(p.gambar, 800)) + '"' + srcset + ' alt="' + esc(p.nama) +
+      '" loading="lazy" decoding="async" onerror="this.remove()">';
+  }
+
   function kartuProduk(p) {
     const warna = KATEGORI_WARNA[p.kategori] || '';
     const label = p.kategori === 'Cetak' ? 'Percetakan' : p.kategori;
     const media = p.gambar
-      ? '<img src="' + esc(p.gambar) + '" alt="' + esc(p.nama) + '" loading="lazy">'
+      ? fotoProduk(p)
       : '<span class="media-ph" aria-hidden="true">' + esc(p.nama.charAt(0)) + '</span>';
     return '<article class="card">' +
-      '<div class="media ' + warna + '">' + media + '<span class="tag">' + esc(label) + '</span></div>' +
+      '<div class="media ' + warna + (p.gambar ? ' berfoto' : '') + '">' + media + '<span class="tag">' + esc(label) + '</span></div>' +
       '<h3>' + esc(p.nama) + '</h3>' +
       '<p class="desc">' + esc(p.deskripsi) + '</p>' +
       '<div class="card-foot"><span class="muted">Harga: ' + esc(p.harga || 'Konsultasi') + '</span>' +
